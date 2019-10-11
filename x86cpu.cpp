@@ -353,6 +353,11 @@ rep:
 		{
 			switch(_eip[1])
 			{
+			case 0x83://jnb
+				iLength = 6;
+				if(!(_cpu386->_eflags & 0x1))//cf=0
+					_cpu386->_eip = (int)_eip + _getimm(_eip,2,4,0);
+				break;
 
 			case 0x84://je
 				iLength = 6;
@@ -393,9 +398,41 @@ rep:
 						iLength = _s_i_b(_cpu386,iLength);
 
 					if(_eip[2]>=0xc0)
-						*(unsigned char *) _base = _cpu386->_eflags & 0x40 ? 1:0;
+						*(unsigned char *) _base = _cpu386->_eflags & 0x40 ? 1:0;// Set byte if equal (ZF=1).
 					else
-						*(unsigned char *)(*_base + (*_index * _scale) + _displacement) = _cpu386->_eflags & 0x40 ? 1:0;
+						*(unsigned char *)(*_base + (*_index * _scale) + _displacement) = _cpu386->_eflags & 0x40 ? 1:0;// Set byte if equal (ZF=1).
+
+				}
+				break;
+
+			case 0x9c://setl
+				{
+					iLength += 1;
+					iLength += _mod_reg_rm(_cpu386,0);
+
+					if(((_eip[2]&7)==4)&&(_eip[2]<0xc0))
+						iLength = _s_i_b(_cpu386,iLength);
+
+					if(_eip[2]>=0xc0)
+						*(unsigned char *) _base = (_cpu386->_eflags & 0x80) != (_cpu386->_eflags & 0x800) ? 1:0;// Set byte if greater or equal (SF=OF).
+					else
+						*(unsigned char *)(*_base + (*_index * _scale) + _displacement) = (_cpu386->_eflags & 0x80) != (_cpu386->_eflags & 0x800) ? 1:0;// Set byte if greater or equal (SF=OF).
+
+				}
+				break;
+
+			case 0x9d://setge
+				{
+					iLength += 1;
+					iLength += _mod_reg_rm(_cpu386,0);
+
+					if(((_eip[2]&7)==4)&&(_eip[2]<0xc0))
+						iLength = _s_i_b(_cpu386,iLength);
+
+					if(_eip[2]>=0xc0)
+						*(unsigned char *) _base = (_cpu386->_eflags & 0x80) == (_cpu386->_eflags & 0x800) ? 1:0;// Set byte if greater or equal (SF=OF).
+					else
+						*(unsigned char *)(*_base + (*_index * _scale) + _displacement) = (_cpu386->_eflags & 0x80) == (_cpu386->_eflags & 0x800) ? 1:0;// Set byte if greater or equal (SF=OF).
 
 				}
 				break;
@@ -1487,7 +1524,7 @@ rep:
 		_cpu386->_register[4] += 4;
 		iLength =1;
 		break;
-
+	
 
 	case 0x68://push 32imm
 		_cpu386->_register[4] -= 4;
@@ -2522,7 +2559,48 @@ rep:
 				iLength = 0;
 				break;
 			case 0x7://sar
-				iLength = 0;
+				{
+					if(_eip[1] >= 0xc0)
+					{
+
+						if(*_eip&1)
+						{
+							operand1 = *_base;
+							*_base = (int)*_base >> operand2;
+							result = *_base;
+							
+						}
+						else
+						{
+							operand1 = (char)(*(unsigned char *)_base);
+							*(char *)_base = *(char *)_base >> operand2;
+							result = *(unsigned char *)_base;
+							
+						}
+					}
+					else
+					{
+						if(*_eip&1)
+						{
+							operand1 = *(unsigned int *)(*_base + (*_index * _scale) + _displacement);
+							*(int *)(*_base + (*_index * _scale) + _displacement) = *(int *)(*_base + (*_index * _scale) + _displacement) >> operand2;
+							result = *(unsigned int *)(*_base + (*_index * _scale) + _displacement);
+							
+						}
+						else
+						{
+							operand1 =(char)(*(unsigned char *)(*_base + (*_index * _scale) + _displacement));
+							*(char *)(*_base + (*_index * _scale) + _displacement) = *(char *)(*_base + (*_index * _scale) + _displacement) >> operand2;
+							result = *(unsigned char *)(*_base + (*_index * _scale) + _displacement);
+							
+						}
+					}
+					_cf = (operand1 >> (operand2-1))&1 ? 1:0;
+					_sf = (int)result < 0 ? 1:0;
+					_zf = !result ? 1:0;
+					if(operand2 == 1)
+						_of = 0;
+				}
 				break;
 
 			};
@@ -2749,8 +2827,26 @@ rep:
 			case 0x01:
 				iLength = 0;
 				break;
-			case 0x02:
-				iLength = 0;
+			case 0x02://call
+				{
+					_cpu386->_register[4] -= 4;
+					*(unsigned int *)_cpu386->_register[4] = _cpu386->_eip + iLength;
+
+					iLength += _mod_reg_rm(_cpu386,2);
+
+					if(((_eip[1]&7)==4)&&(_eip[1]<0xc0))
+						iLength = _s_i_b(_cpu386,iLength);
+
+					if(_eip[1] >= 0xc0)
+					{
+						_cpu386->_eip = *_base;
+					}
+					else
+					{
+						_cpu386->_eip = *(unsigned int *)(*_base + (*_index * _scale) + _displacement);
+					}
+					_cpu386->_eip -= iLength;
+				}
 				break;
 			case 0x03:
 				iLength = 0;
@@ -2803,7 +2899,53 @@ rep:
 	return iLength;
 }
 
+char test_instrname[0x20] = {0};
 
+void do_test_printf()
+{
+	memset(test_instrname,0,0x20);
+	unsigned char * test_buffer = (unsigned char *)&assembler;
+	//jmp to function
+	test_buffer = *(int *)(test_buffer + 1) + test_buffer + 5;
+	int len = 0;
+	int i;
+	//-------------------------log-------------------------
+	FILE * file_p = fopen("call_log.txt","w+");
+	if(!file_p)
+		printf("failed open file!\n");
+	//-------------------------log-------------------------
+
+
+	for(i = 1;i<=2713;i++)
+	{
+		len = assembler(test_buffer,test_instrname);
+		if(!len)
+			break;
+		test_buffer += len;
+		//fprintf(file_p,"%003d %08x %s\n",i,test_buffer-len,test_instrname);
+		fprintf(file_p,"%003d %s\n",i,test_instrname);
+	}
+	fclose(file_p);
+}
+
+void do_test()
+{
+	memset(test_instrname,0,0x20);
+	unsigned char * test_buffer = (unsigned char *)&assembler;
+	//jmp to function
+	test_buffer = *(int *)(test_buffer + 1) + test_buffer + 5;
+	int len = 0;
+	int i;
+
+
+	for(i = 1;i<=2713;i++)
+	{
+		len = assembler(test_buffer,test_instrname);
+		if(!len)
+			break;
+		test_buffer += len;
+	}
+}
 
 int mymain(int arc,char *argv[])
 {
@@ -2823,9 +2965,9 @@ int mymain(int arc,char *argv[])
 	_cpu386._register[7]  = 0;
 	
 	char param_instr[0x80] = {0};
-	unsigned char param_buff[0x10] = {0x66,0x8b,0x01};
+	unsigned char param_buff[0x10] = {0xc1,0x01,0xff,0x12};
 
-
+#if 0
 	//push parameter2, instrname
 	_cpu386._register[4] -= 4;
 	*(unsigned int *)_cpu386._register[4] = (unsigned int)param_instr;	
@@ -2833,23 +2975,25 @@ int mymain(int arc,char *argv[])
 	//push parameter1, buff
 	_cpu386._register[4] -= 4;
 	*(unsigned int *)_cpu386._register[4] = (unsigned int)param_buff;	
+#endif
 
 
 	//call function
 	_cpu386._register[4] -= 4;
 	*(unsigned int*)_cpu386._register[4] = 0x12345678;	
-	_cpu386._eip = (int)&assembler;
+	_cpu386._eip = (int)&do_test;
 	_cpu386._eflags = 0x2;
 
 
 
 
-
+	int i = 0;
 	int j = 0;
+	int length = 0;
 #if 0
 	char instrname[0x30] = {0};
-	int length = 0;
-	int i = 0;
+	
+	
 	
 	//--------------------log--------------------
 	
@@ -2857,8 +3001,6 @@ int mymain(int arc,char *argv[])
 	pfile = fopen("log.txt","w+");
 	if(!pfile)
 		printf("failed open file");
-	char * logstr;
-	logstr = (char *)malloc(0x100);
 	//--------------------log--------------------
 	do
 	{
@@ -2875,8 +3017,6 @@ iterator_start:
 
 		unsigned char *_eip = (unsigned char *)_cpu386._eip;
 
-		//print instruction
-		//assembler((unsigned char *)_cpu386._eip,instrname);
 		fprintf(pfile,"\n%s\n",instrname);
 		printf("\n%s\n",instrname);
 
@@ -2900,12 +3040,11 @@ iterator_start:
 		}
 		
 		fprintf(pfile,"\nEAX = 0x%08x\nECX = 0x%08x\nEDX = 0x%08x\nEBX = 0x%08x\nESP = 0x%08x\nEBP = 0x%08x\nESI = 0x%08x\nEDI = 0x%08x\nEFLAGS = 0x%08x\n栈顶数据为：0x%08x\n",_cpu386._register[0],_cpu386._register[1],_cpu386._register[2],_cpu386._register[3],_cpu386._register[4],_cpu386._register[5],_cpu386._register[6],_cpu386._register[7],_cpu386._eflags,*(unsigned int *)_cpu386._register[4]);
-
 		fprintf(pfile,"==============================================\n");
 
-//-------------------------------------------------------------------------
-		printf("\nEAX = 0x%08x\nECX = 0x%08x\nEDX = 0x%08x\nEBX = 0x%08x\nESP = 0x%08x\nEBP = 0x%08x\nESI = 0x%08x\nEDI = 0x%08x\nEFLAGS = 0x%08x\n栈顶数据为：0x%08x\n",_cpu386._register[0],_cpu386._register[1],_cpu386._register[2],_cpu386._register[3],_cpu386._register[4],_cpu386._register[5],_cpu386._register[6],_cpu386._register[7],_cpu386._eflags,*(unsigned int *)_cpu386._register[4]);
+		//-------------------------------------------------------------------------
 
+		printf("\nEAX = 0x%08x\nECX = 0x%08x\nEDX = 0x%08x\nEBX = 0x%08x\nESP = 0x%08x\nEBP = 0x%08x\nESI = 0x%08x\nEDI = 0x%08x\nEFLAGS = 0x%08x\n栈顶数据为：0x%08x\n",_cpu386._register[0],_cpu386._register[1],_cpu386._register[2],_cpu386._register[3],_cpu386._register[4],_cpu386._register[5],_cpu386._register[6],_cpu386._register[7],_cpu386._eflags,*(unsigned int *)_cpu386._register[4]);
 		printf("==============================================\n");
 
 		//jump to second-time
@@ -2921,22 +3060,35 @@ iterator_start:
 	fclose(pfile);
 
 #else
+
+	//--------------------log--------------------
+	FILE *pfile = NULL;
+	pfile = fopen("log.txt","w+");
+	if(!pfile)
+		printf("failed open file");
+	//--------------------log--------------------
+
+
 do
 	{
-
 iterator_start:
 
-		unsigned char *_eip = (unsigned char *)_cpu386._eip;
-
 		//set debugger pointer
-		if(_cpu386._eip == 0x4024d3)
-			printf("");
-		j++;
+		if(_cpu386._eip == 0x0040FE60)
+		{
+			fprintf(pfile,"%003d  %s\n",++i,test_instrname);
+			//printf("%003d  %s\n",i,test_instrname);
+		}
+		
 		if(j == 990)
-			printf("");
+			j=j;
 
 		//run
-		run(&_cpu386);
+		length = run(&_cpu386);
+		if(!length)
+		{
+			break;
+		}
 
 		//jump to second-time
 		if(flg)
@@ -2947,31 +3099,27 @@ iterator_start:
 		
 	}while(_cpu386._eip != 0x12345678);
 
-#endif
+	//close file
+	fclose(pfile);
 
-	printf("instrname : %s\nlength : %d\n",param_instr,_cpu386._register[0]);
+#endif
+	
+	//printf("\nhhhh length = %d   eip = %08x   opcode = %08x\n",length,_cpu386._eip,*(unsigned int *)_cpu386._eip);
 
 	return 0;
 }
 
 
+
 int main()
 {
 
-	unsigned int _regi[10] ={0x12345678,0x9abcdef0,3,4,5,6,7,8,};
-	*((unsigned char *)_regi + 1) = 0xff;
-
-	//--------------------------
-
-	unsigned char instrname[0x30];
-	unsigned char buff[0x10] = {0x66,0x8b,0x01};
-	int len = assembler((unsigned char *)buff,(char *)instrname);
-	printf("instrname = %s\nlength = %d\n============================================\n",instrname,len);
-
-	//--------------------------
-
 	mymain(0,NULL);
+	puts("over!");
 	
+	//--------------------------
+		
+	do_test_printf();
 	
 	return 0;
 }

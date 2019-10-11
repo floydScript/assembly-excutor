@@ -94,6 +94,14 @@ SOURCE=.\StdAfx.cpp
 # End Source File
 # Begin Source File
 
+SOURCE=.\threeopcode.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=.\twoopcode.cpp
+# End Source File
+# Begin Source File
+
 SOURCE=.\x86cpu.cpp
 # End Source File
 # End Group

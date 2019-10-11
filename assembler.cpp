@@ -656,7 +656,9 @@ push_prefix_buff:
 	{
 	case 0x0f:
 		{
-			length = 0;
+			length += (assembler0f(buff+1,instrname)+1);
+			if(length==1)//if length==1,return 0;
+				return 0;	
 		}	
 		break;
 
@@ -1694,7 +1696,7 @@ DestIsRegister:
 	}
 	else
 	{
-		if((b1 == 0x69) || (b1==0x6b) ||((b1==0x0f) && (b2==0x70)) || (b2 == 0xa4) || (b2 == 0xac) || (b2 == 0xc4) || (b2 == 0xc6))
+		if((b1 == 0x69) || (b1==0x6b) ||((b1==0x0f) && (b2==0x70)) || ((b1==0x0f) && (b2 == 0xa4)) || ((b1==0x0f) && (b2 == 0xac)) || ((b1==0x0f) && (b2 == 0xc4)) || ((b1==0x0f) && (b2 == 0xc6)))
 		{//three-oprand instruction
 			sprintf(instrname,"%s %s,%s,%s",instruction,dest,src,immediate);
 		}
